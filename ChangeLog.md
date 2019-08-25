@@ -1,3 +1,3 @@
-# Changelog for learn-to-count
+# Changelog for scheme-interpreter
 
 ## Unreleased changes

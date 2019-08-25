@@ -39,11 +39,11 @@ library:
   source-dirs: src
 
 executables:
-  learn-to-count-exe:
+  scheme-interpreter-exe:
     main: Main.hs
     source-dirs: app
     dependencies:
-      - learn-to-count
+      - scheme-interpreter
       - optparse-simple
 
     ghc-options:
@@ -52,11 +52,11 @@ executables:
       - -with-rtsopts=-N
 
 tests:
-  learn-to-count-test:
+  scheme-interpreter-test:
     main: Spec.hs
     source-dirs: test
     dependencies:
-      - learn-to-count
+      - scheme-interpreter
       - hspec
 
     ghc-options:

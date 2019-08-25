@@ -6,12 +6,12 @@ import Import
 import Run
 import RIO.Process
 import Options.Applicative.Simple
-import qualified Paths_learn_to_count
+import qualified Paths_scheme_interpreter
 
 main :: IO ()
 main = do
   (options, ()) <- simpleOptions
-    $(simpleVersion Paths_learn_to_count.version)
+    $(simpleVersion Paths_scheme_interpreter.version)
     "Header for command line arguments"
     "Program description, also for command line arguments"
     (Options
