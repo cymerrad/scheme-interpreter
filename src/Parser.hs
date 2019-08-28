@@ -15,8 +15,7 @@ import           Prelude                        ( read )
 -- type Parser = P.Parsec String ()
 
 -- syntax
-data LispVal = Atom String
-             | Symbol String
+data LispVal = Symbol String
              | Variable String
              | Quote LispVal
              | List [LispVal]
@@ -37,7 +36,7 @@ language = emptyLan
   { PT.identStart      = P.letter <|> P.oneOf "!#$%&|*+-/:<=>?@^_~"
   , PT.identLetter     = P.alphaNum <|> P.oneOf "!#$%&|*+-/:<=>?@^_~"
   , PT.caseSensitive   = False
-  , PT.reservedOpNames = map (: []) _funkyOps
+  , PT.reservedOpNames = map (: []) _abbrChars
   , PT.reservedNames   = ["#f", "#t", "quote", "lambda", "set!", "if"]
   }
 
@@ -84,7 +83,7 @@ expression = do
   c <- P.lookAhead P.anyChar
   case c of
     '(' -> nil <|> application
-    _   -> funkyOp <|> constant <|> variable
+    _   -> abbreviation <|> constant <|> variable
 
 -- lambda :: Parser LispVal
 -- lambda = parens -- formals body?
@@ -108,11 +107,11 @@ nil = do
   _ <- P.try $ P.string "()"
   return $ List []
 
-_funkyOps :: [Char]
-_funkyOps = ['.', '`', '\'', ','] -- and few others?
-funkyOp :: Parser LispVal
-funkyOp = do
-  c <- P.try $ P.oneOf _funkyOps
+_abbrChars :: [Char]
+_abbrChars = ['.', '`', '\'', ','] -- and few others?
+abbreviation :: Parser LispVal
+abbreviation = do
+  c <- P.try $ P.oneOf _abbrChars
   case c of
     '\'' -> quote
     '.'  -> cons
@@ -127,9 +126,6 @@ coreExpr = P.try $ do
   unexpected "kthxbai"
 
 {- IDENTIFIERS -}
-atom :: Parser LispVal
-atom = Atom <$> identifier
-
 quote :: Parser LispVal
 quote = do
   _ <- P.try $ P.char '\''
