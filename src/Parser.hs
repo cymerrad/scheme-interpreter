@@ -14,13 +14,17 @@ import           Prelude                        ( read )
 
 -- type Parser = P.Parsec String ()
 
+-- TODO
+-- Warning:
+-- this is a lexer and parser merged into one (bad design, ik)
+
 -- syntax
 data LispVal = Symbol String
              | Variable String
-             | Quote LispVal
-             | List [LispVal]
-             | DottedList [LispVal] LispVal
              | Lit Lit
+             | List [LispVal]
+             | DotNotation
+
   deriving (Show, Eq)
 
 data Lit
@@ -28,6 +32,10 @@ data Lit
   | LString String
   | LBool Bool
   deriving (Show, Eq)
+
+
+_abbrChars :: [Char]
+_abbrChars = ['.', '`', '\'', ','] -- and few others?
 
 emptyLan :: PL.LanguageDef st
 emptyLan = PL.emptyDef
@@ -37,7 +45,7 @@ language = emptyLan
   , PT.identLetter     = P.alphaNum <|> P.oneOf "!#$%&|*+-/:<=>?@^_~"
   , PT.caseSensitive   = False
   , PT.reservedOpNames = map (: []) _abbrChars
-  , PT.reservedNames   = ["#f", "#t", "quote", "lambda", "set!", "if"]
+  , PT.reservedNames   = ["#f", "#t", "quote", "lambda", "set!", "if", "cons"]
   }
 
 lexer :: PT.GenTokenParser String u Identity
@@ -52,6 +60,9 @@ whiteSpace = PT.whiteSpace lexer
 reserved :: String -> Parser ()
 reserved = PT.reserved lexer
 
+reservedOp :: String -> Parser ()
+reservedOp = PT.reservedOp lexer
+
 identifier :: Parser String
 identifier = PT.identifier lexer
 
@@ -61,7 +72,7 @@ string' = PT.stringLiteral lexer
 -- ignoring whitespace
 contents :: Parser a -> Parser a
 contents p = do
-  PT.whiteSpace lexer
+  whiteSpace
   r <- p
   P.eof
   return r
@@ -104,17 +115,15 @@ application = parens $ do
 
 nil :: Parser LispVal
 nil = do
-  _ <- P.try $ P.string "()"
+  _ <- P.try $ P.string "()" -- TODO not true, there can be spaces inside
   return $ List []
 
-_abbrChars :: [Char]
-_abbrChars = ['.', '`', '\'', ','] -- and few others?
 abbreviation :: Parser LispVal
 abbreviation = do
   c <- P.try $ P.oneOf _abbrChars
   case c of
     '\'' -> quote
-    '.'  -> cons
+    -- '.'  -> cons -- period is not an abbreviation
     _    -> P.unexpected "too lazy to implement rest atm"
 
 -- like quote or lambda
@@ -129,11 +138,12 @@ coreExpr = P.try $ do
 quote :: Parser LispVal
 quote = do
   _ <- P.try $ P.char '\''
-  datum
+  d <- datum
+  return $ List [Symbol "quote", d] -- sth like this?
 
 {- DATA -}
 datum :: Parser LispVal
-datum = nil <|> constant <|> symbol <|> list -- <|> vector <|> character
+datum = nil <|> consOp <|> constant <|> symbol <|> list -- <|> vector <|> character
 
 symbol :: Parser LispVal
 symbol = Symbol <$> identifier
@@ -144,12 +154,13 @@ list = parens $ do
   xs <- P.many1 datum
   return $ List xs
 
+-- (cons 'a (cons 'b (cons 'c 'd))) == (cons 'a (cons 'b '(c . d))) == (cons 'a '(b c . d)) == '(a b c . d)
+
 -- TODO: this can happen only inside a datum or formals
-cons :: Parser LispVal
-cons = do
-  whiteSpace
-  last <- datum
-  return $ DottedList [] last
+consOp :: Parser LispVal
+consOp = do
+  _ <- P.try $ string "."
+  return DotNotation
 
 boolean :: Parser LispVal
 boolean = do
