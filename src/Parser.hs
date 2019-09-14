@@ -2,197 +2,128 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Parser where
 
-import           RIO                     hiding ( (<|>) )
-import           Text.Parsec                   as P
-import qualified Text.Parsec.Token             as PT
-import qualified Text.Parsec.Language          as PL
-import           Text.Parsec.String             ( Parser )
-import           Prelude                        ( read )
+import           RIO                     hiding ( some
+                                                , many
+                                                , try
+                                                , (<|>)
+                                                )
+import           Text.Megaparsec
+import           Text.Megaparsec.Char
+import qualified Text.Megaparsec.Char.Lexer    as L
+import           Data.Void                      ( Void )
+import           Data.Text                      ( Text )
+import           Prelude                        ( init
+                                                , last
+                                                )
 
--- note for later about pound symbol
--- https://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/Additional-Notations.html
+-- type Parsec e s a = ParsecT e s Identity a
 
--- type Parser = P.Parsec String ()
-
--- syntax
-data LispVal = Symbol String
-             | Variable String
-             | Quote LispVal
-             | List [LispVal]
-             | DottedList [LispVal] LispVal
-             | Lit Lit
+data LispAtom
+  = Atom String
+  | List [LispAtom]
   deriving (Show, Eq)
 
-data Lit
-  = LInt Integer
-  | LString String
-  | LBool Bool
-  deriving (Show, Eq)
+data Context = None | Quote | Quasiquote | Unquote | Cons | Append deriving (Show, Eq)
 
-emptyLan :: PL.LanguageDef st
-emptyLan = PL.emptyDef
-language :: PL.GenLanguageDef String u Identity
-language = emptyLan
-  { PT.identStart      = P.letter <|> P.oneOf "!#$%&|*+-/:<=>?@^_~"
-  , PT.identLetter     = P.alphaNum <|> P.oneOf "!#$%&|*+-/:<=>?@^_~"
-  , PT.caseSensitive   = False
-  , PT.reservedOpNames = map (: []) _abbrChars
-  , PT.reservedNames   = ["#f", "#t", "quote", "lambda", "set!", "if"]
-  }
+symbolChars :: String
+symbolChars = ".!#$%&|*+-/:<=>?@^_~"
 
-lexer :: PT.GenTokenParser String u Identity
-lexer = PT.makeTokenParser language
+abbreviationChars :: [Char]
+abbreviationChars = ['`', '\'', ',']
+
+type Parser a = Parsec Void Text a
+
+spaceConsumer :: Parser ()
+spaceConsumer = L.space space1 empty empty
+
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme spaceConsumer
+
+word :: Text -> Parser Text
+word = L.symbol spaceConsumer
+
+stringLiteral :: Parser String
+stringLiteral = char '\"' *> manyTill L.charLiteral (char '\"')
 
 parens :: Parser a -> Parser a
-parens = PT.parens lexer
+parens = between (word "(") (word ")")
 
-whiteSpace :: Parser ()
-whiteSpace = PT.whiteSpace lexer
+expr :: Parser LispAtom
+expr = do
+  c <- lookAhead asciiChar
+  switch c
+ where
+  switch :: Char -> Parser LispAtom
+  switch ch | ch `elem` abbreviationChars = expander ch expr
+            | ch == '('                   = list
+            | ch `elem` symbolChars       = symbol
+            | otherwise                   = symbol
 
-reserved :: String -> Parser ()
-reserved = PT.reserved lexer
+symbol :: Parser LispAtom
+symbol = do
+  x <- lexeme sym
+  return $ Atom x
+  where sym = some (alphaNumChar <|> oneOf symbolChars)
 
-identifier :: Parser String
-identifier = PT.identifier lexer
+list :: Parser LispAtom
+list = do
+  _  <- word "("
+  xs <- manyTill expr (word ")")
+  let secondToLast = last . init
+  let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
+  let res = if length xs > 2 && secondToLast xs == (Atom ".")
+        then listToCons $ List (withoutSecondToLast xs)
+        else List xs
+  return res
 
-string' :: Parser String
-string' = PT.stringLiteral lexer
+expander :: Char -> Parser LispAtom -> Parser LispAtom
+expander ch p
+  | ch `elem` abbreviationChars = do
+    _    <- oneOf abbreviationChars -- consume ch
+    rest <- p
+    return $ case ch of
+      '`'  -> List [Atom "quasiquote", rest]
+      '\'' -> List [Atom "quote", rest]
+      ','  -> List [Atom "unquote", rest]
+      _    -> rest
+  | otherwise = fail "programming error"
+
+-- this should receive a list without that magical period at the end
+listToCons :: LispAtom -> LispAtom
+listToCons lst = case lst of
+  Atom _   -> lst
+  List els -> recCons els
+ where
+  recCons :: [LispAtom] -> LispAtom
+  recCons []       = Atom "nil"
+  recCons [x1, x2] = List [Atom "cons", x1, x2]
+  recCons (x : xs) = List [Atom "cons", x, recCons xs]
 
 -- ignoring whitespace
 contents :: Parser a -> Parser a
 contents p = do
-  PT.whiteSpace lexer
+  spaceConsumer
   r <- p
-  P.eof
+  eof
   return r
 
-{- via https://www.scheme.com/tspl2d/grammar.html -}
+lexExpr :: Parser LispAtom
+lexExpr = contents expr
 
-{- DEFINITIONS -}
-variable :: Parser LispVal
-variable = Variable <$> identifier
+-- abbreviation :: Context -> Parser LispAtom -> Parser LispAtom
+-- abbreviation ctx p = case ctx of
+--   None -> try $ do
+--     c    <- oneOf "`',"
+--     rest <- p
 
-{- EXPRESSIONS -}
-expression :: Parser LispVal
--- expression = nil <|> variable <|> quote <|> constant <|> application
-    -- <|> lambda
-    -- <|> if'
-    -- <|> set'
-expression = do
-  whiteSpace
-  c <- P.lookAhead P.anyChar
-  case c of
-    '(' -> nil <|> application
-    _   -> abbreviation <|> constant <|> variable
+--   Quote ->
 
--- lambda :: Parser LispVal
--- lambda = parens -- formals body?
+-- symbolChar :: Parser Char
+-- symbolChar = alphaNumChar <|> (oneOf "!#$%&|*+-/:<=>?@^_~")
 
+-- word :: Parser LispLexeme
+-- word = do
+--   _ <-
 
--- another idea: "try" for reserved words, some of which will be booleans
-constant :: Parser LispVal
-constant = stringLit <|> poundLit <|> number
-
--- formals :: Parser LispVal
-
-application :: Parser LispVal
-application = parens $ do
-  x  <- coreExpr <|> expression
-  -- TODO case on type of x
-  xs <- P.many expression
-  return $ List $ x : xs
-
-nil :: Parser LispVal
-nil = do
-  _ <- P.try $ P.string "()"
-  return $ List []
-
-_abbrChars :: [Char]
-_abbrChars = ['.', '`', '\'', ','] -- and few others?
-abbreviation :: Parser LispVal
-abbreviation = do
-  c <- P.try $ P.oneOf _abbrChars
-  case c of
-    '\'' -> quote
-    '.'  -> cons
-    _    -> P.unexpected "too lazy to implement rest atm"
-
--- like quote or lambda
-coreExpr :: Parser LispVal
-coreExpr = P.try $ do
-  someId <- identifier
-  _      <- P.parserTrace $ "identified " ++ someId
-  _      <- reserved someId
-  unexpected "kthxbai"
-
-{- IDENTIFIERS -}
-quote :: Parser LispVal
-quote = do
-  _ <- P.try $ P.char '\''
-  datum
-
-{- DATA -}
-datum :: Parser LispVal
-datum = nil <|> constant <|> symbol <|> list -- <|> vector <|> character
-
-symbol :: Parser LispVal
-symbol = Symbol <$> identifier
-
--- TODO expanding definition of list to the specification, solves the case of " '('aaa . 'bbb) "
-list :: Parser LispVal
-list = parens $ do
-  xs <- P.many1 datum
-  return $ List xs
-
--- TODO: this can happen only inside a datum or formals
-cons :: Parser LispVal
-cons = do
-  whiteSpace
-  last <- datum
-  return $ DottedList [] last
-
-boolean :: Parser LispVal
-boolean = do
-  b <-
-    do
-        P.try $ reserved "#f"
-        return False
-      <|> do
-            P.try $ reserved "#t"
-            return True
-  return $ Lit $ LBool b
-
-poundLit :: Parser LispVal
-poundLit = do
-  _ <- P.lookAhead $ P.try $ P.char '#'
-  boolean <|> symbol --  <|> character
-
-number :: Parser LispVal
-number = do
-  d  <- P.try P.digit
-  -- case c of
-  --   '#' -> do
-    -- ...
-  -- radix <-
-  --   P.string "#b"
-  --   <|> P.string "#o"
-  --   <|> P.string "#d"
-  --   <|> P.string "#h"
-  --   <|> P.string ""
-  ds <- P.many1 P.digit
-  -- frac <- ignore for now
-  return . Lit . LInt . read $ d : ds
-
-stringLit :: Parser LispVal
-stringLit = do
-  _ <- P.lookAhead $ P.try $ P.char '"'
-  Lit . LString <$> string'
-
--- PARSE
-
-parseExpr :: Parser LispVal
-parseExpr = contents expression
-
-readExpr :: String -> Either P.ParseError LispVal
-readExpr = P.parse parseExpr "<stdin>"
-
+-- lexer :: Parser LispLexeme
+-- lexer =
