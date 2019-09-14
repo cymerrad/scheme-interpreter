@@ -22,8 +22,10 @@ description: Please see the README on Github at <https://github.com/cymerrad/sch
 dependencies:
   - base >= 4.11 && < 10
   - rio >= 0.1.8.0
-  - parsec >= 3.1.14.0
+  - megaparsec
   - hspec
+  - text
+  - parsec
 
 ghc-options:
   - -Wall
@@ -44,6 +46,7 @@ executables:
     source-dirs: app
     dependencies:
       - scheme-interpreter
+      - megaparsec
       - optparse-simple
 
     ghc-options:
