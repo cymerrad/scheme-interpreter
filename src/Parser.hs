@@ -17,11 +17,12 @@ import           Data.Text                      ( Text
                                                 )
 import           Prelude                        ( init
                                                 , last
+                                                , read
                                                 )
 
 -- type Parsec e s a = ParsecT e s Identity a
 
-type Parser a = Parsec Void Text a
+type Parser a = Parsec Void String a
 
 data LispAtom
   = Atom String -- atom is just a word that __may__ be a valid token
@@ -44,8 +45,8 @@ data Number
 
 data Context = None | Quote | Quasiquote | Unquote | Cons | Append deriving (Show, Eq)
 
-symbolChars :: String
-symbolChars = ".!#$%&|*+-/:<=>?@^_~"
+-- symbolChars :: String
+-- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
 
 initialCharacters :: String
 initialCharacters = "!$%&*/:<=>?~_^"
@@ -62,16 +63,17 @@ subsequentChar = initialChar <|> digitChar <|> oneOf nonInitialCharacters
 abbrs :: Map String (String, Parser LispAtom)
 abbrs = M.fromList
   [ ("`" , ("quasiquote", expr))
-  , ("'" , ("quote", expr))
+  , ("'" , ("quote", datum))
   , ("," , ("unquote", expr))
   , ("#(", ("vector", vector))
+  -- ,@
   ]
 
 abbreviations :: [String]
 abbreviations = M.keys abbrs -- ["`", "'", ","]
 
-abbreviationsT :: [Text]
-abbreviationsT = map pack abbreviations
+-- abbreviationsT :: [Text]
+-- abbreviationsT = map pack abbreviations
 
 -- we are matching 2 characters tops
 matchAbbreviation :: String -> Maybe String
@@ -80,6 +82,7 @@ matchAbbreviation abb@(x : _) | M.member abb abbrs = Just abb
                               | otherwise          = Nothing
 matchAbbreviation [] = Nothing
 
+
 -- TODO add comments - they start with a semicolon
 spaceConsumer :: Parser ()
 spaceConsumer = L.space space1 empty empty
@@ -87,7 +90,7 @@ spaceConsumer = L.space space1 empty empty
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme spaceConsumer
 
-word :: Text -> Parser Text
+word :: String -> Parser String
 word = L.symbol spaceConsumer
 
 stringP :: Parser String
@@ -108,20 +111,20 @@ expr = do
   switch2 :: String -> Parser LispAtom
   switch2 [] = empty
   switch2 (ch1 : _) | ch1 == '('                      = list
-                    | ch1 == '#'                      = constant
                     | ch1 `elem` nonInitialCharacters = symbolOrFloat
-                    | ch1 `elem` symbolChars          = symbol
-                    | ch1 == '"'                      = literalString
                     | otherwise                       = symbol
 
-  peekPair :: Parser [Char]
-  peekPair = lookAhead $ do
-    c1 <- asciiChar
-    c2 <- asciiChar
-    return [c1, c2]
+peekPair :: Parser [Char]
+peekPair = lookAhead $ do
+  c1 <- asciiChar
+  c2 <- asciiChar
+  return [c1, c2]
 
 symbol :: Parser LispAtom
-symbol = Symbol <$> some (alphaNumChar <|> oneOf symbolChars)
+symbol = do
+  h <- initialChar
+  t <- some subsequentChar
+  return . Symbol $ h : t
 
 constant :: Parser LispAtom
 constant = empty
@@ -132,6 +135,9 @@ literalString = Constant . LString <$> lexeme stringP
 literalFloat :: Parser LispAtom
 literalFloat = Constant . LNum . Floating <$> L.signed spaceConsumer L.float
 
+literalChar :: Parser LispAtom
+literalChar = empty
+
 -- TODO, just a placeholder for lookups
 vector :: Parser LispAtom
 vector = do
@@ -139,7 +145,21 @@ vector = do
   if (Symbol ".") `elem` xs then fail "illegal use of '.'" else return $ List xs
 
 datum :: Parser LispAtom
-datum = empty
+datum = do
+  pc@[c1, _] <- peekPair
+  case c1 of
+    '"' -> literalString
+    _   -> case pc of
+      "#t"  -> Constant . LBool <$> return True
+      "#f"  -> Constant . LBool <$> return False
+      "#b"  -> toInt pc L.binary
+      "#o"  -> toInt pc L.octal
+      "#x"  -> toInt pc L.hexadecimal
+      "#d"  -> toInt pc L.decimal
+      "#\\" -> literalChar
+      _     -> _
+  where toInt = \pc fun -> Constant . LNum . Integral <$> (word pc >> fun)
+
 
 symbolOrFloat :: Parser LispAtom
 symbolOrFloat =
@@ -160,7 +180,7 @@ list = do
 expander :: String -> Parser LispAtom
 expander abb
   | abb `elem` abbreviations = do
-    _ <- choice (map word abbreviationsT) -- consume
+    _ <- choice (map word abbreviations) -- consume abbreviation
     let abbv = M.lookup abb abbrs
     case abbv of
       Just (keyword, handleRest) -> do
@@ -191,7 +211,7 @@ contents p = do
 lexExpr :: Parser LispAtom
 lexExpr = contents expr
 
-pr :: Text -> IO ()
+pr :: String -> IO ()
 pr = parseTest lexExpr
 
 -- abbreviation :: Context -> Parser LispAtom -> Parser LispAtom
