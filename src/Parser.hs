@@ -12,12 +12,9 @@ import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
 import qualified Data.Map                      as M
 import           Data.Void                      ( Void )
-import           Data.Text                      ( Text
-                                                , pack
-                                                )
+import           Data.Text                      ( Text )
 import           Prelude                        ( init
                                                 , last
-                                                , read
                                                 )
 
 -- type Parsec e s a = ParsecT e s Identity a
@@ -81,7 +78,6 @@ matchAbbreviation abb@(x : _) | M.member abb abbrs = Just abb
                               | M.member [x] abbrs = Just [x]
                               | otherwise          = Nothing
 matchAbbreviation [] = Nothing
-
 
 -- TODO add comments - they start with a semicolon
 spaceConsumer :: Parser ()
@@ -164,7 +160,6 @@ datum = do
 symbolOrFloat :: Parser LispAtom
 symbolOrFloat =
   try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalFloat
-
 
 list :: Parser LispAtom
 list = do
