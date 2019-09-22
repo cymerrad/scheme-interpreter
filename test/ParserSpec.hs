@@ -13,23 +13,37 @@ import           Test.Hspec.Megaparsec
 import           Text.Megaparsec
 
 
-prs :: Text -> Either (ParseErrorBundle Text Void) LispAtom
+prs :: String -> Either (ParseErrorBundle String Void) LispAtom
 prs = parse lexExpr ""
 
+itShPrs :: String -> String -> LispAtom -> SpecWith ()
 itShPrs description input expectedOutput =
   it description $ prs input `shouldParse` expectedOutput
 
 spec :: Spec
 spec = describe "GL & HF testing this" $ do
   primitivesSpec
-  combinationsSpec
+  compoundSpec
+  abbreviationsSpec
 
 primitivesSpec :: Spec
 primitivesSpec = describe "Parsing atoms" $ do
   it "empty list" $ prs "()" `shouldParse` List []
-  it "string" $ prs "\"string\"" `shouldParse` Constant (String "string")
-  itShPrs "integer" "1337" (Constant . Number . Integral 1337)
+  it "string" $ prs "\"string\"" `shouldParse` (LString "string")
+  itShPrs "integer"         "1337"       (LNum (Integral 1337))
+  itShPrs "boolean true"    "#t"         (LBool True)
+  itShPrs "boolean false"   "#f"         (LBool False)
+  itShPrs "character \\n"   "#\\newline" (LChar '\n')
+  itShPrs "character space" "#\\space"   (LChar ' ')
+  itShPrs "character a"     "#\\a"       (LChar 'a') -- TODO: https://hspec.github.io/quickcheck.html
 
-combinationsSpec :: Spec
-combinationsSpec = describe "Parsing some combinations" $ do
+
+abbreviationsSpec :: Spec
+abbreviationsSpec = describe "Parsing abbreviations" $ do
+  itShPrs "quote empty list"      "'()" (Quote (List []))
+  itShPrs "quasiquote empty list" "`()" (Quasiquote (List []))
+
+compoundSpec :: Spec
+compoundSpec = describe "Parsing some combinations" $ do
   it "should work" $ shouldBe True True
+  it "shouldn't suggest not using the 'do' notation" $ True `shouldBe` True

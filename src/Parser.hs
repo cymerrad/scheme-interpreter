@@ -25,22 +25,22 @@ data LispAtom
   = Atom String -- atom is just a word that __may__ be a valid token
   | List [LispAtom]
   | Symbol String
-  | Constant Literal
-  deriving (Show, Eq)
-
-data Literal
-  = LBool Bool
+  | Quote LispAtom
+  | Quasiquote LispAtom
+  | Unquote LispAtom
+  | Vector LispAtom
+  | Cons LispAtom -- tail : head
+  | LBool Bool
   | LNum Number
-  | LChar String
+  | LChar Char
   | LString String
   deriving (Show, Eq)
+-- append? vector?
 
 data Number
   = Integral Int
   | Floating Float
   deriving (Show, Eq)
-
-data Context = None | Quote | Quasiquote | Unquote | Cons | Append deriving (Show, Eq)
 
 -- symbolChars :: String
 -- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
@@ -57,12 +57,12 @@ initialChar = letterChar <|> oneOf initialCharacters
 subsequentChar :: Parser Char
 subsequentChar = initialChar <|> digitChar <|> oneOf nonInitialCharacters
 
-abbrs :: Map String (String, Parser LispAtom)
+abbrs :: Map String (String, Parser LispAtom, LispAtom -> LispAtom)
 abbrs = M.fromList
-  [ ("`" , ("quasiquote", expr))
-  , ("'" , ("quote", datum))
-  , ("," , ("unquote", expr))
-  , ("#(", ("vector", vector))
+  [ ("`" , ("quasiquote", expr, Quasiquote))
+  , ("'" , ("quote", datum, Quote))
+  , ("," , ("unquote", expr, Unquote))
+  , ("#(", ("vector", vector, Vector))
   -- ,@
   ]
 
@@ -126,10 +126,10 @@ constant :: Parser LispAtom
 constant = empty
 
 literalString :: Parser LispAtom
-literalString = Constant . LString <$> lexeme stringP
+literalString = LString <$> lexeme stringP
 
 literalFloat :: Parser LispAtom
-literalFloat = Constant . LNum . Floating <$> L.signed spaceConsumer L.float
+literalFloat = LNum . Floating <$> L.signed spaceConsumer L.float
 
 literalChar :: Parser LispAtom
 literalChar = empty
@@ -146,15 +146,15 @@ datum = do
   case c1 of
     '"' -> literalString
     _   -> case pc of
-      "#t"  -> Constant . LBool <$> return True
-      "#f"  -> Constant . LBool <$> return False
+      "#t"  -> LBool <$> return True
+      "#f"  -> LBool <$> return False
       "#b"  -> toInt pc L.binary
       "#o"  -> toInt pc L.octal
       "#x"  -> toInt pc L.hexadecimal
       "#d"  -> toInt pc L.decimal
       "#\\" -> literalChar
-      _     -> _
-  where toInt = \pc fun -> Constant . LNum . Integral <$> (word pc >> fun)
+      _     -> empty
+  where toInt = \pc fun -> LNum . Integral <$> (word pc >> fun)
 
 
 symbolOrFloat :: Parser LispAtom
@@ -178,10 +178,8 @@ expander abb
     _ <- choice (map word abbreviations) -- consume abbreviation
     let abbv = M.lookup abb abbrs
     case abbv of
-      Just (keyword, handleRest) -> do
-        rest <- handleRest
-        return $ List [Atom keyword, rest]
-      Nothing -> expr
+      Just (_, handleRest, constructor) -> constructor <$> handleRest
+      Nothing                           -> expr
   | otherwise = fail "programming error"
 
 -- this should receive a list without that magical period at the end
