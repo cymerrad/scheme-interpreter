@@ -12,16 +12,14 @@ import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
 import qualified Data.Map                      as M
 import           Data.Void                      ( Void )
-import           Data.Text                      ( Text
-                                                , pack
-                                                )
+import           Data.Text                      ( Text )
 import           Prelude                        ( init
                                                 , last
                                                 )
 
 -- type Parsec e s a = ParsecT e s Identity a
 
-type Parser a = Parsec Void Text a
+type Parser a = Parsec Void String a
 
 data LispAtom
   = Atom String -- atom is just a word that __may__ be a valid token
@@ -31,10 +29,10 @@ data LispAtom
   deriving (Show, Eq)
 
 data Literal
-  = Boolean Bool
-  | Number
-  | Character String
-  | String String
+  = LBool Bool
+  | LNum Number
+  | LChar String
+  | LString String
   deriving (Show, Eq)
 
 data Number
@@ -44,23 +42,35 @@ data Number
 
 data Context = None | Quote | Quasiquote | Unquote | Cons | Append deriving (Show, Eq)
 
-symbolChars :: String
-symbolChars = ".!#$%&|*+-/:<=>?@^_~"
+-- symbolChars :: String
+-- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
+
+initialCharacters :: String
+initialCharacters = "!$%&*/:<=>?~_^"
+
+nonInitialCharacters :: String
+nonInitialCharacters = ".+-"
 
 initialChar :: Parser Char
-initialChar = letterChar <|> oneOf ("!$%&*/:<=>?~_^" :: String)
+initialChar = letterChar <|> oneOf initialCharacters
 
 subsequentChar :: Parser Char
-subsequentChar = initialChar <|> digitChar <|> oneOf (".+-" :: String)
+subsequentChar = initialChar <|> digitChar <|> oneOf nonInitialCharacters
 
-abbrs :: Map String String
-abbrs = M.fromList [("`", "quasiquote"), ("'", "quote"), (",", "unquote")]
+abbrs :: Map String (String, Parser LispAtom)
+abbrs = M.fromList
+  [ ("`" , ("quasiquote", expr))
+  , ("'" , ("quote", datum))
+  , ("," , ("unquote", expr))
+  , ("#(", ("vector", vector))
+  -- ,@
+  ]
 
 abbreviations :: [String]
 abbreviations = M.keys abbrs -- ["`", "'", ","]
 
-abbreviationsT :: [Text]
-abbreviationsT = map pack abbreviations
+-- abbreviationsT :: [Text]
+-- abbreviationsT = map pack abbreviations
 
 -- we are matching 2 characters tops
 matchAbbreviation :: String -> Maybe String
@@ -76,7 +86,7 @@ spaceConsumer = L.space space1 empty empty
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme spaceConsumer
 
-word :: Text -> Parser Text
+word :: String -> Parser String
 word = L.symbol spaceConsumer
 
 stringP :: Parser String
@@ -88,43 +98,68 @@ parens = between (word "(") (word ")")
 expr :: Parser LispAtom
 expr = do
   pairCh <- peekPair
-  switch1 pairCh
+  lexeme $ switch1 pairCh
  where
   switch1 :: String -> Parser LispAtom
   switch1 pair = case matchAbbreviation pair of
-    Just abb -> expander abb expr
+    Just abb -> expander abb
     Nothing  -> switch2 pair
   switch2 :: String -> Parser LispAtom
   switch2 [] = empty
-  switch2 pair@(ch1 : _) | -- go from most specific to least
-                           pair == "#("           = vector
-                         | ch1 == '('             = list
-                         | ch1 == '#'             = constant
-                         | ch1 `elem` symbolChars = symbol
-                         | ch1 == '"'             = literalString
-                         | otherwise              = symbol
+  switch2 (ch1 : _) | ch1 == '('                      = list
+                    | ch1 `elem` nonInitialCharacters = symbolOrFloat
+                    | otherwise                       = symbol
 
-  peekPair :: Parser [Char]
-  peekPair = lookAhead $ do
-    c1 <- asciiChar
-    c2 <- asciiChar
-    return [c1, c2]
+peekPair :: Parser [Char]
+peekPair = lookAhead $ do
+  c1 <- asciiChar
+  c2 <- asciiChar
+  return [c1, c2]
 
 symbol :: Parser LispAtom
 symbol = do
-  x <- lexeme sym
-  return $ Atom x
-  where sym = some (alphaNumChar <|> oneOf symbolChars)
+  h <- initialChar
+  t <- some subsequentChar
+  return . Symbol $ h : t
 
 constant :: Parser LispAtom
 constant = empty
 
 literalString :: Parser LispAtom
-literalString = Constant . String <$> lexeme stringP
+literalString = Constant . LString <$> lexeme stringP
+
+literalFloat :: Parser LispAtom
+literalFloat = Constant . LNum . Floating <$> L.signed spaceConsumer L.float
+
+literalChar :: Parser LispAtom
+literalChar = empty
 
 -- TODO, just a placeholder for lookups
 vector :: Parser LispAtom
-vector = empty
+vector = do
+  xs <- manyTill datum (word ")")
+  if (Symbol ".") `elem` xs then fail "illegal use of '.'" else return $ List xs
+
+datum :: Parser LispAtom
+datum = do
+  pc@[c1, _] <- peekPair
+  case c1 of
+    '"' -> literalString
+    _   -> case pc of
+      "#t"  -> Constant . LBool <$> return True
+      "#f"  -> Constant . LBool <$> return False
+      "#b"  -> toInt pc L.binary
+      "#o"  -> toInt pc L.octal
+      "#x"  -> toInt pc L.hexadecimal
+      "#d"  -> toInt pc L.decimal
+      "#\\" -> literalChar
+      _     -> _
+  where toInt = \pc fun -> Constant . LNum . Integral <$> (word pc >> fun)
+
+
+symbolOrFloat :: Parser LispAtom
+symbolOrFloat =
+  try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalFloat
 
 list :: Parser LispAtom
 list = do
@@ -137,15 +172,16 @@ list = do
         else List xs
   return res
 
-expander :: String -> Parser LispAtom -> Parser LispAtom
-expander abb p
+expander :: String -> Parser LispAtom
+expander abb
   | abb `elem` abbreviations = do
-    _    <- choice (map word abbreviationsT) -- consume
-    rest <- p
+    _ <- choice (map word abbreviations) -- consume abbreviation
     let abbv = M.lookup abb abbrs
-    return $ case abbv of
-      Just expanded -> List [Atom expanded, rest]
-      Nothing       -> rest
+    case abbv of
+      Just (keyword, handleRest) -> do
+        rest <- handleRest
+        return $ List [Atom keyword, rest]
+      Nothing -> expr
   | otherwise = fail "programming error"
 
 -- this should receive a list without that magical period at the end
@@ -170,7 +206,7 @@ contents p = do
 lexExpr :: Parser LispAtom
 lexExpr = contents expr
 
-pr :: Text -> IO ()
+pr :: String -> IO ()
 pr = parseTest lexExpr
 
 -- abbreviation :: Context -> Parser LispAtom -> Parser LispAtom
