@@ -61,6 +61,7 @@ tests:
     dependencies:
       - scheme-interpreter
       - hspec
+      - hspec-megaparsec
 
     ghc-options:
       - -threaded
