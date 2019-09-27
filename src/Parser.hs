@@ -76,7 +76,7 @@ digits :: String
 digits = map intToDigit [0 .. 9]
 
 letters :: String
-letters = (map chr [65 .. 90]) ++ (map chr [97 .. 122])
+letters = map chr ([65 .. 90] ++ [97 .. 122])
 
 initialCharacters :: String
 initialCharacters = "!$%&*/:<=>?~_^"
@@ -179,9 +179,9 @@ literalChar =
     >>  try (continueWord "space" >> lChar <$> return ' ')
     <|> try (continueWord "newline" >> lChar <$> return '\n')
     <|> (do
-            c <- lexeme asciiChar
-            return $ lChar c
-          )
+          c <- lexeme asciiChar
+          return $ lChar c
+        )
  where
   continueWord :: String -> Parser String
   continueWord str = sequenceA (map char str)
@@ -219,8 +219,16 @@ datum :: Parser LispDatum
 datum = do
   c1 <- peekOne
   case c1 of
+    '(' -> dList
     '"' -> dString <$> literalString
-    _   -> poundSymbols
+    '#' -> poundSymbols
+    _   -> do
+      sym <- symbol
+      case sym of
+        EConstant d    -> return d
+        Variable  name -> return $ DSymbol name
+        _              -> fail "Don't really know how to handle this"
+
 
 -- TODO: it's wrong, lol
 symbolOrFloat :: Parser LispExpr
@@ -238,6 +246,20 @@ list = do
         then listToCons $ List (withoutSecondToLast xs)
         else List xs
   return res
+
+
+dList :: Parser LispDatum
+dList = do
+  _  <- word "("
+  xs <- manyTill datum (word ")")
+  -- let secondToLast = last . init
+  -- let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
+  -- let res = if length xs > 2 && secondToLast xs == DSymbol "."
+  --       then listToCons $ DList (withoutSecondToLast xs)
+  --       else DList xs
+  return $ DList xs
+
+
 
 expander :: String -> Parser LispExpr
 expander abb
@@ -259,6 +281,16 @@ listToCons lst = case lst of
   recCons []       = Variable "nil"
   recCons [x1, x2] = List [Variable "cons", x1, x2]
   recCons (x : xs) = List [Variable "cons", x, recCons xs]
+
+-- dListToCons :: LispDatum -> LispDatum
+-- dListToCons lst = case lst of
+--   DList els -> recCons els
+--   _        -> lst
+--   where
+--   recCons :: [LispDatum] -> LispDatum
+--   recCons []       = DSymbol "nil"
+--   recCons [x1, x2] = DList [DSymbol "cons", x1, x2]
+--   recCons (x : xs) = DList [DSymbol "cons", x, recCons xs]
 
 -- ignoring whitespace
 contents :: Parser a -> Parser a
