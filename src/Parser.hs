@@ -12,30 +12,57 @@ import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
 import qualified Data.Map                      as M
 import           Data.Void                      ( Void )
-import           Data.Text                      ( Text )
 import           Prelude                        ( init
                                                 , last
+                                                )
+import           Data.Char                      ( intToDigit
+                                                , chr
                                                 )
 
 -- type Parsec e s a = ParsecT e s Identity a
 
 type Parser a = Parsec Void String a
 
-data LispAtom
-  = Atom String -- atom is just a word that __may__ be a valid token
-  | List [LispAtom]
-  | Symbol String
-  | Quote LispAtom
-  | Quasiquote LispAtom
-  | Unquote LispAtom
-  | Vector LispAtom
-  | Cons LispAtom -- tail : head
-  | LBool Bool
+data LispExpr
+  = List [LispExpr]
+  | Variable String
+  | EConstant LispDatum
+  | Quote LispDatum
+  | Lambda LispExpr LispExpr -- first can be a symbol, list of symbols or cons of symbols
+  | If LispExpr LispExpr LispExpr
+  | Application LispExpr
+  | Set LispExpr LispExpr
+  | Quasiquote LispDatum
+  | Unquote LispDatum
+  | Cons LispExpr -- tail : head
+  deriving (Show, Eq)
+-- append? vector?
+
+data LispDatum
+  = DConstant Constant
+  | DSymbol String
+  | DList [LispDatum]
+  | DVector [LispDatum]
+  deriving (Show, Eq)
+
+data Constant
+  = LBool Bool
   | LNum Number
   | LChar Char
   | LString String
   deriving (Show, Eq)
--- append? vector?
+
+
+dBool = DConstant . LBool
+dNum = DConstant . LNum
+dChar = DConstant . LChar
+dString = DConstant . LString
+
+lBool = EConstant . dBool
+lNum = EConstant . dNum
+lChar = EConstant . dChar
+lString = EConstant . dString
+
 
 data Number
   = Integral Int
@@ -44,6 +71,12 @@ data Number
 
 -- symbolChars :: String
 -- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
+
+digits :: String
+digits = map intToDigit [0 .. 9]
+
+letters :: String
+letters = (map chr [65 .. 90]) ++ (map chr [97 .. 122])
 
 initialCharacters :: String
 initialCharacters = "!$%&*/:<=>?~_^"
@@ -57,12 +90,11 @@ initialChar = letterChar <|> oneOf initialCharacters
 subsequentChar :: Parser Char
 subsequentChar = initialChar <|> digitChar <|> oneOf nonInitialCharacters
 
-abbrs :: Map String (String, Parser LispAtom, LispAtom -> LispAtom)
+abbrs :: Map String (String, Parser LispDatum, LispDatum -> LispExpr)
 abbrs = M.fromList
-  [ ("`" , ("quasiquote", expr, Quasiquote))
-  , ("'" , ("quote", datum, Quote))
-  , ("," , ("unquote", expr, Unquote))
-  , ("#(", ("vector", vector, Vector))
+  [ ("`", ("quasiquote", datum, Quasiquote))
+  , ("'", ("quote", datum, Quote))
+  , (",", ("unquote", datum, Unquote))
   -- ,@
   ]
 
@@ -95,18 +127,19 @@ stringP = char '\"' *> manyTill L.charLiteral (char '\"')
 parens :: Parser a -> Parser a
 parens = between (word "(") (word ")")
 
-expr :: Parser LispAtom
+expr :: Parser LispExpr
 expr = do
   pairCh <- peekPair
   lexeme $ switch1 pairCh
  where
-  switch1 :: String -> Parser LispAtom
+  switch1 :: String -> Parser LispExpr
   switch1 pair = case matchAbbreviation pair of
     Just abb -> expander abb
     Nothing  -> switch2 pair
-  switch2 :: String -> Parser LispAtom
+  switch2 :: String -> Parser LispExpr
   switch2 [] = empty
   switch2 (ch1 : _) | ch1 == '('                      = list
+                    | ch1 == '"' = lString <$> literalString
                     | ch1 `elem` nonInitialCharacters = symbolOrFloat
                     | otherwise                       = symbol
 
@@ -116,63 +149,97 @@ peekPair = lookAhead $ do
   c2 <- asciiChar
   return [c1, c2]
 
-symbol :: Parser LispAtom
-symbol = do
-  h <- initialChar
-  t <- some subsequentChar
-  return . Symbol $ h : t
+peekOne :: Parser Char
+peekOne = lookAhead asciiChar
 
-constant :: Parser LispAtom
+symbol :: Parser LispExpr
+symbol = do
+  c <- peekOne
+  switch c
+ where
+  switch :: Char -> Parser LispExpr
+  switch c
+    | c `elem` digits = literalInt
+    | c == '#' = EConstant <$> poundSymbols
+    | otherwise = do
+      h <- initialChar
+      t <- some subsequentChar
+      return . Variable $ h : t
+
+constant :: Parser LispExpr
 constant = empty
 
-literalString :: Parser LispAtom
-literalString = LString <$> lexeme stringP
+literalString :: Parser String
+literalString = lexeme stringP
 
-literalFloat :: Parser LispAtom
-literalFloat = LNum . Floating <$> L.signed spaceConsumer L.float
+literalChar :: Parser LispExpr
+literalChar =
+  char '#'
+    >>  char '\\'
+    >>  try (continueWord "space" >> lChar <$> return ' ')
+    <|> try (continueWord "newline" >> lChar <$> return '\n')
+    <|> (do
+            c <- lexeme asciiChar
+            return $ lChar c
+          )
+ where
+  continueWord :: String -> Parser String
+  continueWord str = sequenceA (map char str)
 
-literalChar :: Parser LispAtom
-literalChar = empty
+literalInt :: Parser LispExpr
+literalInt = lNum . Integral <$> L.signed spaceConsumer L.decimal
 
--- TODO, just a placeholder for lookups
-vector :: Parser LispAtom
+literalFloat :: Parser LispExpr
+literalFloat = lNum . Floating <$> L.signed spaceConsumer L.float
+
+vector :: Parser LispDatum
 vector = do
   xs <- manyTill datum (word ")")
-  if (Symbol ".") `elem` xs then fail "illegal use of '.'" else return $ List xs
+  if (DSymbol ".") `elem` xs
+    then fail "illegal use of '.'"
+    else return $ DVector xs
 
-datum :: Parser LispAtom
+poundSymbols :: Parser LispDatum
+poundSymbols = do
+  pc@[c1, c2] <- peekPair
+  case pc of
+    "#t"  -> word pc >> dBool <$> return True
+    "#f"  -> word pc >> dBool <$> return False
+    "#b"  -> toInt pc L.binary
+    "#o"  -> toInt pc L.octal
+    "#x"  -> toInt pc L.hexadecimal
+    "#d"  -> toInt pc L.decimal
+    "#\\" -> do
+      EConstant x <- literalChar
+      return x
+    _ -> empty
+  where toInt pc fun = dNum . Integral <$> (word pc >> fun)
+
+datum :: Parser LispDatum
 datum = do
-  pc@[c1, _] <- peekPair
+  c1 <- peekOne
   case c1 of
-    '"' -> literalString
-    _   -> case pc of
-      "#t"  -> LBool <$> return True
-      "#f"  -> LBool <$> return False
-      "#b"  -> toInt pc L.binary
-      "#o"  -> toInt pc L.octal
-      "#x"  -> toInt pc L.hexadecimal
-      "#d"  -> toInt pc L.decimal
-      "#\\" -> literalChar
-      _     -> empty
-  where toInt = \pc fun -> LNum . Integral <$> (word pc >> fun)
+    '"' -> dString <$> literalString
+    _   -> poundSymbols
 
-
-symbolOrFloat :: Parser LispAtom
+-- TODO: it's wrong, lol
+symbolOrFloat :: Parser LispExpr
 symbolOrFloat =
-  try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalFloat
+  try (choice [word "+" $> Variable "+", word "-" $> Variable "-"])
+    <|> literalFloat
 
-list :: Parser LispAtom
+list :: Parser LispExpr
 list = do
   _  <- word "("
   xs <- manyTill expr (word ")")
   let secondToLast = last . init
   let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
-  let res = if length xs > 2 && secondToLast xs == Atom "."
+  let res = if length xs > 2 && secondToLast xs == Variable "."
         then listToCons $ List (withoutSecondToLast xs)
         else List xs
   return res
 
-expander :: String -> Parser LispAtom
+expander :: String -> Parser LispExpr
 expander abb
   | abb `elem` abbreviations = do
     _ <- choice (map word abbreviations) -- consume abbreviation
@@ -183,15 +250,15 @@ expander abb
   | otherwise = fail "programming error"
 
 -- this should receive a list without that magical period at the end
-listToCons :: LispAtom -> LispAtom
+listToCons :: LispExpr -> LispExpr
 listToCons lst = case lst of
   List els -> recCons els
   _        -> lst
  where
-  recCons :: [LispAtom] -> LispAtom
-  recCons []       = Symbol "nil"
-  recCons [x1, x2] = List [Symbol "cons", x1, x2]
-  recCons (x : xs) = List [Symbol "cons", x, recCons xs]
+  recCons :: [LispExpr] -> LispExpr
+  recCons []       = Variable "nil"
+  recCons [x1, x2] = List [Variable "cons", x1, x2]
+  recCons (x : xs) = List [Variable "cons", x, recCons xs]
 
 -- ignoring whitespace
 contents :: Parser a -> Parser a
@@ -201,13 +268,13 @@ contents p = do
   eof
   return r
 
-lexExpr :: Parser LispAtom
+lexExpr :: Parser LispExpr
 lexExpr = contents expr
 
 pr :: String -> IO ()
 pr = parseTest lexExpr
 
--- abbreviation :: Context -> Parser LispAtom -> Parser LispAtom
+-- abbreviation :: Context -> Parser LispExpr -> Parser LispExpr
 -- abbreviation ctx p = case ctx of
 --   None -> try $ do
 --     c    <- oneOf "`',"

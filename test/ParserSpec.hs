@@ -13,12 +13,17 @@ import           Test.Hspec.Megaparsec
 import           Text.Megaparsec
 
 
-prs :: String -> Either (ParseErrorBundle String Void) LispAtom
+prs :: String -> Either (ParseErrorBundle String Void) LispExpr
 prs = parse lexExpr ""
 
-itShPrs :: String -> String -> LispAtom -> SpecWith ()
+itShPrs :: String -> String -> LispExpr -> SpecWith ()
 itShPrs description input expectedOutput =
   it description $ prs input `shouldParse` expectedOutput
+
+
+itShNotPrs :: String -> String -> SpecWith ()
+itShNotPrs description input = it description $ prs `shouldFailOn` input
+
 
 spec :: Spec
 spec = describe "GL & HF testing this" $ do
@@ -29,19 +34,20 @@ spec = describe "GL & HF testing this" $ do
 primitivesSpec :: Spec
 primitivesSpec = describe "Parsing atoms" $ do
   it "empty list" $ prs "()" `shouldParse` List []
-  it "string" $ prs "\"string\"" `shouldParse` (LString "string")
-  itShPrs "integer"         "1337"       (LNum (Integral 1337))
-  itShPrs "boolean true"    "#t"         (LBool True)
-  itShPrs "boolean false"   "#f"         (LBool False)
-  itShPrs "character \\n"   "#\\newline" (LChar '\n')
-  itShPrs "character space" "#\\space"   (LChar ' ')
-  itShPrs "character a"     "#\\a"       (LChar 'a') -- TODO: https://hspec.github.io/quickcheck.html
+  it "string" $ prs "\"string\"" `shouldParse` (lString "string")
+  itShPrs "integer"         "1337"       (lNum (Integral 1337))
+  itShPrs "boolean true"    "#t"         (lBool True)
+  itShPrs "boolean false"   "#f"         (lBool False)
+  itShPrs "character \\n"   "#\\newline" (lChar '\n')
+  itShPrs "character space" "#\\space"   (lChar ' ')
+  itShPrs "character a"     "#\\a"       (lChar 'a') -- TODO: https://hspec.github.io/quickcheck.html
+  itShNotPrs "character duplicated a" "#\\aa"
 
 
 abbreviationsSpec :: Spec
 abbreviationsSpec = describe "Parsing abbreviations" $ do
-  itShPrs "quote empty list"      "'()" (Quote (List []))
-  itShPrs "quasiquote empty list" "`()" (Quasiquote (List []))
+  itShPrs "quote empty list"      "'()" (Quote (DList []))
+  itShPrs "quasiquote empty list" "`()" (Quasiquote (DList []))
 
 compoundSpec :: Spec
 compoundSpec = describe "Parsing some combinations" $ do
