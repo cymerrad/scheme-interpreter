@@ -37,6 +37,8 @@ ghc-options:
   - -Wpartial-fields
   - -Wredundant-constraints
   - -freduction-depth=0
+  - -Wmissing-signatures
+  - -Wtype-defaults
 
 library:
   source-dirs: src
@@ -67,3 +69,5 @@ tests:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
+      - -Wmissing-signatures
+      - -Wunused-matches
