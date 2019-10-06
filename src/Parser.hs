@@ -43,6 +43,7 @@ data LispDatum
   | DSymbol String
   | DList [LispDatum]
   | DVector [LispDatum]
+  | DRestricted LispExpr -- only some should be allowed, like Unqoute
   deriving (Show, Eq)
 
 data Constant
@@ -69,8 +70,8 @@ data Number
   | Floating Float
   deriving (Show, Eq)
 
--- symbolChars :: String
--- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
+symbolChars :: String
+symbolChars = ".!#$%&|*+-/:<=>?@^_~"
 
 digits :: String
 digits = map intToDigit [0 .. 9]
@@ -89,6 +90,9 @@ initialChar = letterChar <|> oneOf initialCharacters
 
 subsequentChar :: Parser Char
 subsequentChar = initialChar <|> digitChar <|> oneOf nonInitialCharacters
+
+formChar :: Parser Char
+formChar = letterChar <|> digitChar <|> oneOf symbolChars
 
 abbrs :: Map String (String, Parser LispDatum, LispDatum -> LispExpr)
 abbrs = M.fromList
@@ -127,6 +131,7 @@ stringP = char '\"' *> manyTill L.charLiteral (char '\"')
 parens :: Parser a -> Parser a
 parens = between (word "(") (word ")")
 
+-- expression vs symbol vs form
 expr :: Parser LispExpr
 expr = do
   pairCh <- peekPair
@@ -138,10 +143,9 @@ expr = do
     Nothing  -> switch2 pair
   switch2 :: String -> Parser LispExpr
   switch2 [] = empty
-  switch2 (ch1 : _) | ch1 == '('                      = list
+  switch2 (ch1 : _) | ch1 == '(' = list
                     | ch1 == '"' = lString <$> literalString
-                    | ch1 `elem` nonInitialCharacters = symbolOrFloat
-                    | otherwise                       = symbol
+                    | otherwise  = symbol
 
 peekPair :: Parser [Char]
 peekPair = lookAhead $ do
@@ -159,7 +163,8 @@ symbol = do
  where
   switch :: Char -> Parser LispExpr
   switch c
-    | c `elem` digits = literalInt
+    | c `elem` nonInitialCharacters = symbolOrFloat
+    | c `elem` digits = literalNum
     | c == '#' = EConstant <$> poundSymbols
     | otherwise = do
       h <- initialChar
@@ -186,11 +191,10 @@ literalChar =
   continueWord :: String -> Parser String
   continueWord str = sequenceA (map char str)
 
-literalInt :: Parser LispExpr
-literalInt = lNum . Integral <$> L.signed spaceConsumer L.decimal
-
-literalFloat :: Parser LispExpr
-literalFloat = lNum . Floating <$> L.signed spaceConsumer L.float
+literalNum :: Parser LispExpr
+literalNum =
+  try (lNum . Floating <$> L.signed spaceConsumer L.float)
+    <|> (lNum . Integral <$> L.signed spaceConsumer L.decimal)
 
 vector :: Parser LispDatum
 vector = do
@@ -222,6 +226,7 @@ datum = do
     '(' -> dList
     '"' -> dString <$> literalString
     '#' -> poundSymbols
+    ',' -> DRestricted <$> expr
     _   -> do
       sym <- symbol
       case sym of
@@ -229,12 +234,11 @@ datum = do
         Variable  name -> return $ DSymbol name
         _              -> fail "Don't really know how to handle this"
 
-
--- TODO: it's wrong, lol
 symbolOrFloat :: Parser LispExpr
 symbolOrFloat =
-  try (choice [word "+" $> Variable "+", word "-" $> Variable "-"])
-    <|> literalFloat
+  try (char '+' >> space1 $> Variable "+")
+    <|> try (char '-' >> space1 $> Variable "-")
+    <|> literalNum
 
 list :: Parser LispExpr
 list = do
@@ -300,26 +304,9 @@ contents p = do
   eof
   return r
 
-lexExpr :: Parser LispExpr
-lexExpr = contents expr
+parseExpr :: Parser LispExpr
+parseExpr = contents expr
 
 pr :: String -> IO ()
-pr = parseTest lexExpr
+pr = parseTest parseExpr
 
--- abbreviation :: Context -> Parser LispExpr -> Parser LispExpr
--- abbreviation ctx p = case ctx of
---   None -> try $ do
---     c    <- oneOf "`',"
---     rest <- p
-
---   Quote ->
-
--- symbolChar :: Parser Char
--- symbolChar = alphaNumChar <|> (oneOf "!#$%&|*+-/:<=>?@^_~")
-
--- word :: Parser LispLexeme
--- word = do
---   _ <-
-
--- lexer :: Parser LispLexeme
--- lexer =
