@@ -15,9 +15,6 @@ import           Data.Void                      ( Void )
 import           Prelude                        ( init
                                                 , last
                                                 )
-import           Data.Char                      ( intToDigit
-                                                , chr
-                                                )
 
 -- type Parsec e s a = ParsecT e s Identity a
 
@@ -25,25 +22,15 @@ type Parser a = Parsec Void String a
 
 data LispExpr
   = List [LispExpr]
-  | Variable String
-  | EConstant LispDatum
-  | Quote LispDatum
-  | Lambda LispExpr LispExpr -- first can be a symbol, list of symbols or cons of symbols
-  | If LispExpr LispExpr LispExpr
-  | Application LispExpr
-  | Set LispExpr LispExpr
-  | Quasiquote LispDatum
-  | Unquote LispDatum
-  | Cons LispExpr -- tail : head
+  | Symbol String
+  | Constant Constant
+  | Quote LispExpr
+  | Quasiquote LispExpr
+  | Unquote LispExpr
+  | Cons LispExpr LispExpr -- tail : head
+  | Vector [LispExpr]
   deriving (Show, Eq)
 -- append? vector?
-
-data LispDatum
-  = DConstant Constant
-  | DSymbol String
-  | DList [LispDatum]
-  | DVector [LispDatum]
-  deriving (Show, Eq)
 
 data Constant
   = LBool Bool
@@ -52,20 +39,14 @@ data Constant
   | LString String
   deriving (Show, Eq)
 
-
-dBool = DConstant . LBool
-dNum = DConstant . LNum
-dChar = DConstant . LChar
-dString = DConstant . LString
-
-lBool = EConstant . dBool
-lNum = EConstant . dNum
-lChar = EConstant . dChar
-lString = EConstant . dString
+lBool = Constant . LBool
+lNum = Constant . LNum
+lChar = Constant . LChar
+lString = Constant . LString
 
 
 data Number
-  = Integral Int
+  = Integral Integer
   | Floating Float
   deriving (Show, Eq)
 
@@ -73,10 +54,10 @@ data Number
 -- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
 
 digits :: String
-digits = map intToDigit [0 .. 9]
+digits = ['0' .. '9']
 
 letters :: String
-letters = map chr ([65 .. 90] ++ [97 .. 122])
+letters = ['a' .. 'z'] ++ ['A' .. 'Z']
 
 initialCharacters :: String
 initialCharacters = "!$%&*/:<=>?~_^"
@@ -90,11 +71,14 @@ initialChar = letterChar <|> oneOf initialCharacters
 subsequentChar :: Parser Char
 subsequentChar = initialChar <|> digitChar <|> oneOf nonInitialCharacters
 
-abbrs :: Map String (String, Parser LispDatum, LispDatum -> LispExpr)
+-- in previous versions 'expr' was something different
+-- which in theory provided much more control of what could be inside
+-- but it should be Lisp, so who cares, just anything goes
+abbrs :: Map String (String, Parser LispExpr, LispExpr -> LispExpr)
 abbrs = M.fromList
-  [ ("`", ("quasiquote", datum, Quasiquote))
-  , ("'", ("quote", datum, Quote))
-  , (",", ("unquote", datum, Unquote))
+  [ ("`", ("quasiquote", expr, Quasiquote))
+  , ("'", ("quote", expr, Quote))
+  , (",", ("unquote", expr, Unquote))
   -- ,@
   ]
 
@@ -160,11 +144,11 @@ symbol = do
   switch :: Char -> Parser LispExpr
   switch c
     | c `elem` digits = literalInt
-    | c == '#' = EConstant <$> poundSymbols
+    | c == '#' = poundSymbols
     | otherwise = do
       h <- initialChar
       t <- some subsequentChar
-      return . Variable $ h : t
+      return . Symbol $ h : t
 
 constant :: Parser LispExpr
 constant = empty
@@ -192,49 +176,46 @@ literalInt = lNum . Integral <$> L.signed spaceConsumer L.decimal
 literalFloat :: Parser LispExpr
 literalFloat = lNum . Floating <$> L.signed spaceConsumer L.float
 
-vector :: Parser LispDatum
+vector :: Parser LispExpr
 vector = do
-  xs <- manyTill datum (word ")")
-  if (DSymbol ".") `elem` xs
+  xs <- manyTill expr (word ")")
+  if (Symbol ".") `elem` xs
     then fail "illegal use of '.'"
-    else return $ DVector xs
+    else return $ Vector xs
 
-poundSymbols :: Parser LispDatum
+poundSymbols :: Parser LispExpr
 poundSymbols = do
   pc@[c1, c2] <- peekPair
   case pc of
-    "#t"  -> word pc >> dBool <$> return True
-    "#f"  -> word pc >> dBool <$> return False
+    "#t"  -> word pc >> lBool <$> return True
+    "#f"  -> word pc >> lBool <$> return False
     "#b"  -> toInt pc L.binary
     "#o"  -> toInt pc L.octal
     "#x"  -> toInt pc L.hexadecimal
     "#d"  -> toInt pc L.decimal
-    "#\\" -> do
-      EConstant x <- literalChar
-      return x
-    _ -> empty
-  where toInt pc fun = dNum . Integral <$> (word pc >> fun)
+    "#\\" -> literalChar
+    _     -> empty
+  where toInt pc mFun = lNum . Integral <$> (word pc >> mFun)
 
-datum :: Parser LispDatum
-datum = do
-  c1 <- peekOne
-  case c1 of
-    '(' -> dList
-    '"' -> dString <$> literalString
-    '#' -> poundSymbols
-    _   -> do
-      sym <- symbol
-      case sym of
-        EConstant d    -> return d
-        Variable  name -> return $ DSymbol name
-        _              -> fail "Don't really know how to handle this"
+-- datum :: Parser LispExpr
+-- datum = do
+--   c1 <- peekOne
+--   case c1 of
+--     '(' -> dList
+--     '"' -> LString <$> literalString
+--     '#' -> poundSymbols
+--     _   -> do
+--       sym <- symbol
+--       case sym of
+--         Constant d    -> return d
+--         Symbol   name -> return $ Symbol name
+--         _             -> fail "Don't really know how to handle this"
 
 
 -- TODO: it's wrong, lol
 symbolOrFloat :: Parser LispExpr
 symbolOrFloat =
-  try (choice [word "+" $> Variable "+", word "-" $> Variable "-"])
-    <|> literalFloat
+  try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalFloat
 
 list :: Parser LispExpr
 list = do
@@ -242,22 +223,22 @@ list = do
   xs <- manyTill expr (word ")")
   let secondToLast = last . init
   let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
-  let res = if length xs > 2 && secondToLast xs == Variable "."
+  let res = if length xs > 2 && secondToLast xs == Symbol "."
         then listToCons $ List (withoutSecondToLast xs)
         else List xs
   return res
 
 
-dList :: Parser LispDatum
-dList = do
-  _  <- word "("
-  xs <- manyTill datum (word ")")
-  -- let secondToLast = last . init
-  -- let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
-  -- let res = if length xs > 2 && secondToLast xs == DSymbol "."
-  --       then listToCons $ DList (withoutSecondToLast xs)
-  --       else DList xs
-  return $ DList xs
+-- dList :: Parser LispExpr
+-- dList = do
+--   _  <- word "("
+--   xs <- manyTill datum (word ")")
+--   -- let secondToLast = last . init
+--   -- let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
+--   -- let res = if length xs > 2 && secondToLast xs == DSymbol "."
+--   --       then listToCons $ DList (withoutSecondToLast xs)
+--   --       else DList xs
+--   return $ DList xs
 
 
 
@@ -278,9 +259,9 @@ listToCons lst = case lst of
   _        -> lst
  where
   recCons :: [LispExpr] -> LispExpr
-  recCons []       = Variable "nil"
-  recCons [x1, x2] = List [Variable "cons", x1, x2]
-  recCons (x : xs) = List [Variable "cons", x, recCons xs]
+  recCons []       = Symbol "nil"
+  recCons [x1, x2] = List [Symbol "cons", x1, x2]
+  recCons (x : xs) = List [Symbol "cons", x, recCons xs]
 
 -- dListToCons :: LispDatum -> LispDatum
 -- dListToCons lst = case lst of

@@ -11,7 +11,6 @@ import           Parser
 import           Test.Hspec
 import           Test.Hspec.Megaparsec
 import           Text.Megaparsec
-import           Prelude                        ( uncurry )
 
 
 prs :: String -> Either (ParseErrorBundle String Void) LispExpr
@@ -53,8 +52,8 @@ primitivesSpec = describe "Parsing atoms" $ do
 
 abbreviationsSpec :: Spec
 abbreviationsSpec = describe "Parsing abbreviations" $ do
-  itShPrs "quote empty list"      "'()" (Quote (DList []))
-  itShPrs "quasiquote empty list" "`()" (Quasiquote (DList []))
+  itShPrs "quote empty list"      "'()" (Quote (List []))
+  itShPrs "quasiquote empty list" "`()" (Quasiquote (List []))
 
 
 compoundSpec :: Spec
