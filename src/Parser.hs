@@ -85,9 +85,6 @@ abbrs = M.fromList
 abbreviations :: [String]
 abbreviations = M.keys abbrs -- ["`", "'", ","]
 
--- abbreviationsT :: [Text]
--- abbreviationsT = map pack abbreviations
-
 -- we are matching 2 characters tops
 matchAbbreviation :: String -> Maybe String
 matchAbbreviation abb@(x : _) | M.member abb abbrs = Just abb
@@ -125,7 +122,7 @@ expr = do
   switch2 (ch1 : _) | ch1 == '('                      = list
                     | ch1 == '"' = lString <$> literalString
                     | ch1 `elem` nonInitialCharacters = symbolOrFloat
-                    | otherwise                       = symbol
+                    | otherwise                       = lSymbol
 
 peekPair :: Parser [Char]
 peekPair = lookAhead $ do
@@ -136,8 +133,8 @@ peekPair = lookAhead $ do
 peekOne :: Parser Char
 peekOne = lookAhead asciiChar
 
-symbol :: Parser LispExpr
-symbol = do
+lSymbol :: Parser LispExpr
+lSymbol = do
   c <- peekOne
   switch c
  where
@@ -197,21 +194,6 @@ poundSymbols = do
     _     -> empty
   where toInt pc mFun = lNum . Integral <$> (word pc >> mFun)
 
--- datum :: Parser LispExpr
--- datum = do
---   c1 <- peekOne
---   case c1 of
---     '(' -> dList
---     '"' -> LString <$> literalString
---     '#' -> poundSymbols
---     _   -> do
---       sym <- symbol
---       case sym of
---         Constant d    -> return d
---         Symbol   name -> return $ Symbol name
---         _             -> fail "Don't really know how to handle this"
-
-
 -- TODO: it's wrong, lol
 symbolOrFloat :: Parser LispExpr
 symbolOrFloat =
@@ -227,20 +209,6 @@ list = do
         then listToCons $ List (withoutSecondToLast xs)
         else List xs
   return res
-
-
--- dList :: Parser LispExpr
--- dList = do
---   _  <- word "("
---   xs <- manyTill datum (word ")")
---   -- let secondToLast = last . init
---   -- let withoutSecondToLast xss = (init . init $ xss) ++ [last xss]
---   -- let res = if length xs > 2 && secondToLast xs == DSymbol "."
---   --       then listToCons $ DList (withoutSecondToLast xs)
---   --       else DList xs
---   return $ DList xs
-
-
 
 expander :: String -> Parser LispExpr
 expander abb
@@ -263,16 +231,6 @@ listToCons lst = case lst of
   recCons [x1, x2] = List [Symbol "cons", x1, x2]
   recCons (x : xs) = List [Symbol "cons", x, recCons xs]
 
--- dListToCons :: LispDatum -> LispDatum
--- dListToCons lst = case lst of
---   DList els -> recCons els
---   _        -> lst
---   where
---   recCons :: [LispDatum] -> LispDatum
---   recCons []       = DSymbol "nil"
---   recCons [x1, x2] = DList [DSymbol "cons", x1, x2]
---   recCons (x : xs) = DList [DSymbol "cons", x, recCons xs]
-
 -- ignoring whitespace
 contents :: Parser a -> Parser a
 contents p = do
@@ -287,20 +245,5 @@ lexExpr = contents expr
 pr :: String -> IO ()
 pr = parseTest lexExpr
 
--- abbreviation :: Context -> Parser LispExpr -> Parser LispExpr
--- abbreviation ctx p = case ctx of
---   None -> try $ do
---     c    <- oneOf "`',"
---     rest <- p
-
---   Quote ->
-
--- symbolChar :: Parser Char
--- symbolChar = alphaNumChar <|> (oneOf "!#$%&|*+-/:<=>?@^_~")
-
--- word :: Parser LispLexeme
--- word = do
---   _ <-
-
--- lexer :: Parser LispLexeme
--- lexer =
+prm :: String -> Maybe LispExpr
+prm = parseMaybe lexExpr
