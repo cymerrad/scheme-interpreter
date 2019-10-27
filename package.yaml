@@ -27,6 +27,7 @@ dependencies:
   - text
   - parsec
   - containers
+  - hspec-megaparsec
 
 ghc-options:
   - -Wall
