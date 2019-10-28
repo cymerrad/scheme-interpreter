@@ -3,7 +3,7 @@ module Eval where
 import           Parser
 import           Data.Map                      as M
 
-type Procedure = [LispExpr] -> LispExpr
+type Procedure = [LispExpr] -> Either Error LispExpr
 newtype Error = E String
 instance Show Error where
   show (E body) = show body
@@ -11,7 +11,7 @@ instance Show Error where
 type Env = M.Map String Procedure
 
 env :: Env
-env = M.fromList []
+env = M.fromList [("+", trySumming)]
 
 eval :: LispExpr -> Either Error LispExpr
 eval val@(Constant _       ) = Right val
@@ -41,4 +41,13 @@ evalQuasiquote val = case val of
 evalApplication :: String -> [LispExpr] -> Either Error LispExpr
 evalApplication name args = case M.lookup name env of
   Nothing        -> Left (E (name ++ " undefined"))
-  Just procedure -> Right (procedure args)
+  Just procedure -> procedure args
+
+contractInt :: LispExpr -> Either Error Integer
+contractInt (Constant (LNum (Integral n))) = Right n
+contractInt _                              = Left (E "not an int")
+
+trySumming :: Procedure
+trySumming args = case (mapM contractInt args) of
+  Right nums -> Right (lNum (Integral (sum nums)))
+  Left  err  -> Left err
