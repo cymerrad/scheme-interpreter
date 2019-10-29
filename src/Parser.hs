@@ -122,7 +122,7 @@ expr = do
   switch2 [] = empty
   switch2 (ch1 : _) | ch1 == '(' = list
                     | ch1 == '"' = lString <$> literalString
-                    | ch1 `elem` nonInitialCharacters = symbolOrFloat
+                    | ch1 `elem` nonInitialCharacters = symbolOrNum
                     | otherwise                       = lSymbol
 
 peekPair :: Parser [Char]
@@ -195,9 +195,9 @@ poundSymbols = do
   where toInt pc mFun = lNum . Integral <$> (word pc >> mFun)
 
 -- TODO: it's wrong, lol
-symbolOrFloat :: Parser LispExpr
-symbolOrFloat =
-  try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalNum
+symbolOrNum :: Parser LispExpr
+symbolOrNum =
+  try (choice [char '+' >> space1 $> Symbol "+", char '-' >> space1 $> Symbol "-"]) <|> literalNum
 
 list :: Parser LispExpr
 list = do

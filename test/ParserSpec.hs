@@ -59,9 +59,9 @@ abbreviationsSpec = describe "Parsing abbreviations" $ do
   itShPrs "quote empty list"      "'()"      (Quote (List []))
   itShPrs "quasiquote empty list" "`()"      (Quasiquote (List []))
   itShPrs "unquote empty list"    ",()"      (Unquote (List [])) -- shouldn't be possible at level above quote
-  itShPrs "quote list"            "'(+ 1 2)" (Quote (List []))
-  itShPrs "quasiquote list"       "`(+ 1 2)" (Quasiquote (List []))
-  itShPrs "unquote list"          ",(+ 1 2)" (Unquote (List []))
+  itShPrs "quote list"            "'(+ 1 2)" (Quote (List [Symbol "+",Constant (LNum (Integral 1)),Constant (LNum (Integral 2))]))
+  itShPrs "quasiquote list"       "`(+ 1 2)" (Quasiquote (List [Symbol "+",Constant (LNum (Integral 1)),Constant (LNum (Integral 2))]))
+  itShPrs "unquote list"          ",(+ 1 2)" (Unquote (List [Symbol "+",Constant (LNum (Integral 1)),Constant (LNum (Integral 2))]))
 
 compoundSpec :: Spec
 compoundSpec = describe "Parsing some combinations" $ do
@@ -109,6 +109,5 @@ compoundSpec = describe "Parsing some combinations" $ do
   itShPrs
     "quasiquote unquote"
     "`(,(+ 1 2))"
-    (Quasiquote (List [Symbol "+", lNum (Integral 1), lNum (Integral 2)])
-    )
+    (Quasiquote (List [Unquote (List [Symbol "+", lNum (Integral 1), lNum (Integral 2)])]))
 
