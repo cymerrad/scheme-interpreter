@@ -50,8 +50,8 @@ data Number
   | Floating Float
   deriving (Show, Eq)
 
--- symbolChars :: String
--- symbolChars = ".!#$%&|*+-/:<=>?@^_~"
+symbolChars :: String
+symbolChars = ".!#$%&|*+-/:<=>?@^_~"
 
 digits :: String
 digits = ['0' .. '9']
@@ -108,6 +108,7 @@ stringP = char '\"' *> manyTill L.charLiteral (char '\"')
 parens :: Parser a -> Parser a
 parens = between (word "(") (word ")")
 
+-- expression vs symbol vs form
 expr :: Parser LispExpr
 expr = do
   pairCh <- peekPair
@@ -119,7 +120,7 @@ expr = do
     Nothing  -> switch2 pair
   switch2 :: String -> Parser LispExpr
   switch2 [] = empty
-  switch2 (ch1 : _) | ch1 == '('                      = list
+  switch2 (ch1 : _) | ch1 == '(' = list
                     | ch1 == '"' = lString <$> literalString
                     | ch1 `elem` nonInitialCharacters = symbolOrFloat
                     | otherwise                       = lSymbol
@@ -140,7 +141,7 @@ lSymbol = do
  where
   switch :: Char -> Parser LispExpr
   switch c
-    | c `elem` digits = literalInt
+    | c `elem` digits = literalNum
     | c == '#' = poundSymbols
     | otherwise = do
       h <- initialChar
@@ -167,11 +168,10 @@ literalChar =
   continueWord :: String -> Parser String
   continueWord str = sequenceA (map char str)
 
-literalInt :: Parser LispExpr
-literalInt = lNum . Integral <$> L.signed spaceConsumer L.decimal
-
-literalFloat :: Parser LispExpr
-literalFloat = lNum . Floating <$> L.signed spaceConsumer L.float
+literalNum :: Parser LispExpr
+literalNum =
+  try (lNum . Floating <$> L.signed spaceConsumer L.float)
+    <|> (lNum . Integral <$> L.signed spaceConsumer L.decimal)
 
 vector :: Parser LispExpr
 vector = do
@@ -197,7 +197,7 @@ poundSymbols = do
 -- TODO: it's wrong, lol
 symbolOrFloat :: Parser LispExpr
 symbolOrFloat =
-  try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalFloat
+  try (choice [word "+" $> Symbol "+", word "-" $> Symbol "-"]) <|> literalNum
 
 list :: Parser LispExpr
 list = do
@@ -239,11 +239,11 @@ contents p = do
   eof
   return r
 
-lexExpr :: Parser LispExpr
-lexExpr = contents expr
+parseExpr :: Parser LispExpr
+parseExpr = contents expr
 
 pr :: String -> IO ()
-pr = parseTest lexExpr
+pr = parseTest parseExpr
 
 prm :: String -> Maybe LispExpr
-prm = parseMaybe lexExpr
+prm = parseMaybe parseExpr
